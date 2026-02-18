@@ -114,9 +114,115 @@ graph TD
 > to fix this — without touching the existing `Cab` class or the `VehicleFactory`'s
 > core logic?**
 
-**Your Answer (fill this after attempting):**  
-...
 
 **Hint (reveal only if stuck):**  
 Think about the Open/Closed Principle — open for extension, closed for modification.
 Can a new type register itself into the factory instead of the factory knowing about it?
+
+## ❓ Knowledge Check (Answer from memory before reading answer)
+
+> You are extending the Ride-Sharing app. A new requirement arrives: **Premium Cab**
+> must behave exactly like `Cab` but with a surge pricing multiplier that changes
+> every 15 minutes based on demand.
+>
+> **If you add `PREMIUM_CAB` directly into `VehicleFactory`, which design principle
+> are you violating and why? What is the exact change you would make to the factory
+> to fix this — without touching the existing `Cab` class or the `VehicleFactory`'s
+> core logic?**
+
+---
+
+### **Answer**
+
+**Which principle is violated:**  
+The **Open/Closed Principle (OCP)** — one of the five SOLID principles.
+
+> *"A class should be open for extension but closed for modification."*
+
+By adding `PREMIUM_CAB` directly into `VehicleFactory`'s `switch` statement, you are
+**modifying existing, already-tested factory code** every time a new vehicle type appears.
+In a large system this means:
+- Re-testing the entire factory for every new addition
+- Risk of accidentally breaking existing cases (`BIKE`, `AUTO`, `CAB`)
+- The factory becomes a growing, fragile god-class over time
+
+---
+
+**The Fix — Self-Registering Registry Factory:**  
+Instead of the factory knowing about every type, **each new type registers itself
+into the factory**. The factory's core logic never changes — it just looks up the registry.
+
+**Step 1 — Change the factory to use a mutable registry:**
+```java
+// VehicleFactory.java — core logic never changes again
+public class VehicleFactory {
+
+    // Registry: any new vehicle type registers itself here
+    private static final Map<VehicleType, Supplier<Vehicle>> registry = new HashMap<>();
+
+    // Called by each vehicle type to register itself
+    public static void register(VehicleType type, Supplier<Vehicle> supplier) {
+        registry.put(type, supplier);
+    }
+
+    public static Vehicle create(VehicleType type) {
+        Supplier<Vehicle> supplier = registry.get(type);
+        if (supplier == null) {
+            throw new IllegalArgumentException("No vehicle registered for type: " + type);
+        }
+        return supplier.get();
+    }
+}
+```
+
+**Step 2 — Create `PremiumCab` as a self-contained extension:**
+```java
+// PremiumCab.java — completely new file, zero changes to existing code
+public class PremiumCab implements Vehicle {
+    private final double surgeMultiplier;
+    private static final double BASE_FARE   = 50.0;
+    private static final double RATE_PER_KM = 18.0;
+
+    public PremiumCab(double surgeMultiplier) {
+        this.surgeMultiplier = surgeMultiplier;
+    }
+
+    @Override
+    public String getType() { return "PREMIUM_CAB"; }
+
+    @Override
+    public double calculateFare(double distanceKm) {
+        return (BASE_FARE + RATE_PER_KM * distanceKm) * surgeMultiplier;
+    }
+
+    @Override
+    public void dispatch(String pickup, String drop) {
+        System.out.printf("[PREMIUM_CAB] 🚖 Dispatched from '%s' to '%s' | Surge: %.1fx%n",
+            pickup, drop, surgeMultiplier);
+    }
+
+    // Self-registration — this runs when the class is loaded
+    static {
+        VehicleFactory.register(VehicleType.PREMIUM_CAB, () -> new PremiumCab(getCurrentSurge()));
+    }
+
+    private static double getCurrentSurge() {
+        // In production: fetch from a Surgepricing microservice or Redis cache
+        return 1.8;
+    }
+}
+```
+
+**What changed:**
+
+| | Before (Wrong) | After (Correct) |
+|---|---|---|
+| Adding new type | Edit `VehicleFactory.java` | Create new file only |
+| Risk to existing types | High — shared switch statement | Zero — registry is isolated |
+| OCP compliance | ❌ Violated | ✅ Satisfied |
+| Factory awareness | Factory knows every type | Factory knows nothing about types |
+
+**The core insight:**  
+The factory should be a **dumb lookup table**, not a **smart decision maker**.
+Intelligence about how to build a `PremiumCab` belongs inside `PremiumCab` itself —
+not inside the factory.
