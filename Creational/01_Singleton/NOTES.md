@@ -106,8 +106,60 @@ graph TD
 > **Why does the Singleton pattern fail here, and what architectural change
 > would you make to fix it — without abandoning the Singleton pattern within each pod?**
 
-**Your Answer (fill this after attempting):**  
-...
-
 **Hint (reveal only if stuck):**  
 Think about where the request count state lives — is it in memory or shared storage?
+
+---
+
+### **Answer:**  
+
+**Why it fails:**  
+The Singleton pattern guarantees only one instance **per process (per pod)**.  
+In a horizontally scaled system with 12 pods, you have **12 separate Singletons** —
+each living in its own JVM/Node process, each with its own isolated memory.  
+They have absolutely no awareness of each other.
+
+So when the user hits Pod-3 for 60 requests, Pod-3's `RateLimiter` sees 60/100 — fine, allow.  
+When the same user hits Pod-7 for 60 requests, Pod-7's `RateLimiter` sees 60/100 — fine, allow.  
+**Total actual requests: 120. Your rate limit: broken.**
+
+This is called the **"Split-Brain" problem** — multiple nodes making independent decisions
+on state that should be globally shared.
+
+---
+
+**The Fix — Externalize the State:**  
+The Singleton inside each pod should **stop storing the count in memory**.  
+Instead, it should delegate all read/write operations to a **shared external store** —
+most commonly **Redis** using the `INCR` + `EXPIRE` command pattern.
+```
+Pod-3's RateLimiter Singleton          Pod-7's RateLimiter Singleton
+         │                                        │
+         │  INCR user:9821:requests               │  INCR user:9821:requests
+         │  EXPIRE 60 seconds                     │  EXPIRE 60 seconds
+         └──────────────┬─────────────────────────┘
+                        │
+               ┌────────▼────────┐
+               │   Redis (Single │
+               │   Source of     │
+               │   Truth)        │
+               │                 │
+               │ user:9821 → 60  │  ← Pod-3 wrote this
+               │ user:9821 → 120 │  ← Pod-7 incremented, now BLOCKED
+               └─────────────────┘
+```
+
+**Each pod's Singleton is preserved** — there is still exactly one `RateLimiter` instance
+per pod, avoiding duplicate connections or config. But the **state it manages now lives
+in Redis**, not in the pod's memory. Every pod reads and writes to the same Redis key,
+giving you true global rate limiting across the entire cluster.
+
+**Key Redis commands used:**
+- `INCR user:{id}:requests` — atomically increments the counter (thread-safe by design)
+- `EXPIRE user:{id}:requests 60` — auto-resets the counter after 60 seconds
+- `GET user:{id}:requests` — check current count before processing the request
+
+**Why this is the right mental model:**  
+Singleton solves *"one instance per process"*.  
+For *"one shared state across processes"*, you need an **external coordination layer**
+(Redis, Memcached, DynamoDB) — and the Singleton becomes a clean local gateway to it.
