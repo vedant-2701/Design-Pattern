@@ -82,7 +82,7 @@ graph TD
 | Language   | Scenario                                  | File |
 |------------|-------------------------------------------|------|
 | TypeScript | UI Theme Engine — SaaS Dashboard          | [typescript/UIThemeFactory.ts](./typescript/UIThemeFactory.ts) |
-| Java       | Multi-Database ORM Engine — FinTech App   | [java/DatabaseFactory.java](./java/DatabaseFactory.java) |
+| Java       | Multi-Database ORM Engine — FinTech App   | [java/DatabaseFactoryProvider.java](./java/DatabaseFactory.java) |
 
 ---
 
